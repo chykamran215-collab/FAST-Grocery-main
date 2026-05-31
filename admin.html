@@ -1,0 +1,22 @@
+<h2>Coupon Management</h2>
+
+<input id="couponCode">
+<input id="couponDiscount">
+
+<button onclick="addCoupon()">
+Add Coupon
+</button>
+async function addCoupon(){
+
+await db.collection("coupons").doc(
+couponCode.value
+).set({
+
+code:couponCode.value,
+discount:Number(couponDiscount.value)
+
+});
+
+alert("Coupon Added");
+
+}
