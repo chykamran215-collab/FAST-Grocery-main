@@ -1,0 +1,96 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+<title>FAST_Grocery Admin Login</title>
+
+<script src="https://cdn.tailwindcss.com"></script>
+
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
+
+</head>
+
+<body class="bg-gray-100 flex items-center justify-center min-h-screen">
+
+<div class="bg-white p-8 rounded-xl shadow-xl w-full max-w-md">
+
+<h1 class="text-3xl font-bold text-center text-green-700 mb-6">
+FAST_Grocery Admin
+</h1>
+
+<input
+id="email"
+type="email"
+placeholder="Admin Email"
+class="border p-3 w-full rounded mb-4"
+/>
+
+<input
+id="password"
+type="password"
+placeholder="Password"
+class="border p-3 w-full rounded mb-4"
+/>
+
+<button
+onclick="login()"
+class="bg-green-700 hover:bg-green-800 text-white w-full py-3 rounded text-lg"
+>
+Login
+</button>
+
+<p id="error" class="text-red-500 mt-4 text-center"></p>
+
+</div>
+
+<script>
+
+// For Firebase JS SDK v7.20.0 and later, measurementId is optional
+const firebaseConfig = {
+  apiKey: "AIzaSyCnPVVNkzGiCz1j_3PqzP--SQeJWUmGiSU",
+  authDomain: "fast-grocery-3322b.firebaseapp.com",
+  databaseURL: "https://fast-grocery-3322b-default-rtdb.asia-southeast1.firebasedatabase.app",
+  projectId: "fast-grocery-3322b",
+  storageBucket: "fast-grocery-3322b.firebasestorage.app",
+  messagingSenderId: "878961129693",
+  appId: "1:878961129693:web:c06f2dd4fa22ecd4624334",
+  measurementId: "G-16M82PPJTM"
+};
+firebase.initializeApp(firebaseConfig);
+
+const auth = firebase.auth();
+
+async function login(){
+
+const email =
+document.getElementById("email").value;
+
+const password =
+document.getElementById("password").value;
+
+try{
+
+await auth.signInWithEmailAndPassword(
+email,
+password
+);
+
+window.location.href = "admin.html";
+
+}catch(error){
+
+document.getElementById("error").innerText =
+error.message;
+
+}
+
+}
+
+</script>
+
+</body>
+</html>
