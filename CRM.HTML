@@ -1,0 +1,800 @@
+import { useState, useEffect, useCallback, useRef } from "react";
+import * as XLSX from "xlsx";
+
+// ─── KEYS ─────────────────────────────────────────────────────
+const KEY_DB = "gcrm_db";
+const KEY_SET = "gcrm_settings";
+const KEY_USERS = "gcrm_users";
+const KEY_SESSION = "gcrm_session";
+const KEY_ADMINPWD = "gcrm_adminpwd";
+
+// ─── HELPERS ──────────────────────────────────────────────────
+const todayStr = () => new Date().toISOString().slice(0, 10);
+const fmtDate = (iso) => iso ? new Date(iso).toLocaleDateString("bn-BD", { day: "numeric", month: "short", year: "numeric" }) : "—";
+const fmtTime = (iso) => iso ? new Date(iso).toLocaleTimeString("bn-BD", { hour: "2-digit", minute: "2-digit" }) : "—";
+const bnToEn = (s) => String(s).replace(/[০-৯]/g, d => String("০১২৩৪৫৬৭৮৯".indexOf(d)));
+const fmtAmt = (n) => { const v = parseFloat(n); return isNaN(v) ? "0" : v.toLocaleString("en-US"); };
+const safeNum = (v) => { const n = parseFloat(bnToEn(String(v ?? "")).replace(/,/g, "")); return isNaN(n) ? 0 : n; };
+const btnS = (type, sm) => {
+const base = { border: "none", borderRadius: 8, fontFamily: "inherit", cursor: "pointer", display: "inline-flex", alignItems: "center", gap: 5, fontWeight: 600, transition: "opacity .15s", padding: sm ? "6px 12px" : "9px 18px", fontSize: sm ? ".78rem" : ".88rem" };
+const m = { primary: { background: "#f0883e", color: "#fff" }, success: { background: "#3fb950", color: "#fff" }, info: { background: "#58a6ff", color: "#fff" }, danger: { background: "#f85149", color: "#fff" }, outline: { background: "transparent", border: "1px solid #30363d", color: "#8b949e" } };
+return { ...base, ...(m[type] || m.outline) };
+};
+
+function getCustOrders(orders, phone) { return orders.filter(o => o.phone === phone).sort((a, b) => new Date(a.date) - new Date(b.date)); }
+function getCustTotal(orders, phone) { return getCustOrders(orders, phone).reduce((s, o) => s + (safeNum(o.grandTotal) || safeNum(o.amount)), 0); }
+function getGrand(o) { return safeNum(o.grandTotal) > 0 ? safeNum(o.grandTotal) : safeNum(o.amount) + safeNum(o.deliveryCharge); }
+
+function Badge({ count }) {
+const cfg = count === 0 ? ["new", "নতুন"] : count === 1 ? ["blue", "🎉 ২য় অর্ডারে ছাড়"] : count === 19 ? ["gold", "🏆 ২০তম আসছে!"] : count >= 20 ? ["purple", "⭐ নিয়মিত"] : count >= 5 ? ["purple", "পরিচিত"] : ["new", "নতুন কাস্টমার"];
+return <span className={`badge ${cfg[0]}`}>{cfg[1]}</span>;
+}
+
+function ProgBar({ count }) {
+return (
+<div style={{ marginTop: 5 }}>
+<div style={{ height: 4, background: "#30363d", borderRadius: 4, overflow: "hidden" }}>
+<div style={{ height: "100%", width: `${Math.min(count / 20 * 100, 100)}%`, background: "linear-gradient(90deg,#58a6ff,#f0883e)", transition: "width .4s" }} />
+</div>
+<div style={{ fontSize: ".67rem", color: "#8b949e", marginTop: 2 }}>২০তম অর্ডার: {count}/20 {count >= 20 ? "✅" : ""}</div>
+</div>
+);
+}
+
+function Notif({ n }) {
+return (
+<div style={{ position: "fixed", top: 66, right: 14, zIndex: 999, background: "#161b22", border: `1px solid ${n?.type === "error" ? "#f85149" : "#3fb950"}`, borderRadius: 10, padding: "11px 16px", minWidth: 240, boxShadow: "0 8px 24px rgba(0,0,0,.5)", transform: n?.show ? "translateX(0)" : "translateX(130%)", transition: "transform .3s", fontFamily: "inherit" }}>
+<div style={{ fontWeight: 700, color: n?.type === "error" ? "#f85149" : "#3fb950", fontSize: ".88rem", marginBottom: 2 }}>{n?.title}</div>
+<div style={{ fontSize: ".8rem", color: "#e6edf3" }}>{n?.msg}</div>
+</div>
+);
+}
+
+// ─── RECEIPT ──────────────────────────────────────────────────
+function makeReceiptHTML(order, settings) {
+const d = new Date(order.date);
+const items = order.items ? order.items.split(/[,\n]/).map(s => s.trim()).filter(Boolean) : [];
+const sub = safeNum(order.amount), del = safeNum(order.deliveryCharge);
+const grand = safeNum(order.grandTotal) || (sub + del);
+const milestone = order.orderNum === 2 ? `🎉 ২য় অর্ডার বিশেষ অফার! ${settings.offer2 || ""}` : order.orderNum === 20 ? `🏆 ২০তম মাইলস্টোন! ${settings.offer20 || ""}` : "";
+return `<!DOCTYPE html><html lang="bn"><head><meta charset="UTF-8"><link href="https://fonts.googleapis.com/css2?family=Hind+Siliguri:wght@400;600;700&display=swap" rel="stylesheet"><style>*{box-sizing:border-box;margin:0;padding:0;}body{font-family:'Hind Siliguri',sans-serif;background:#f0f0f0;display:flex;justify-content:center;padding:20px;}.r{background:#fff;width:360px;padding:22px;box-shadow:0 2px 12px rgba(0,0,0,.15);}.hdr{text-align:center;border-bottom:2px dashed #ccc;padding-bottom:12px;margin-bottom:12px;}.sn{font-size:1.3rem;font-weight:700;}.sub{font-size:.78rem;color:#555;margin-top:2px;}.meta{display:flex;justify-content:space-between;font-size:.74rem;color:#777;margin-bottom:10px;background:#f8f8f8;padding:5px 8px;border-radius:4px;}.ci{background:#f9f9f9;border-left:3px solid #f0883e;padding:8px 12px;margin-bottom:10px;font-size:.8rem;line-height:1.7;}.ot{display:inline-block;background:#e8f0fe;color:#1a5fcc;font-size:.7rem;padding:1px 7px;border-radius:10px;margin-top:2px;}.ob{background:#fffbea;border:1px solid #f0c040;border-radius:6px;padding:8px 12px;margin-bottom:10px;font-size:.8rem;color:#7a5c00;text-align:center;font-weight:600;}table{width:100%;border-collapse:collapse;font-size:.8rem;}th{background:#f5f5f5;padding:6px 8px;text-align:left;border-bottom:2px solid #ddd;font-weight:600;}td{padding:6px 8px;border-bottom:1px solid #f0f0f0;}.r2{text-align:right;}.sr td{background:#fafafa;color:#666;font-size:.77rem;}.dr td{background:#fff8f2;color:#b85c00;font-size:.77rem;}.sep td{border-bottom:2px dashed #ccc;padding:1px 0;}.gr td{background:#1c1c1c;color:#fff;font-weight:700;font-size:.93rem;padding:9px 8px;}.nt{font-size:.74rem;color:#888;padding:7px 0;border-bottom:1px solid #eee;}.ftr{text-align:center;margin-top:12px;border-top:2px dashed #ccc;padding-top:12px;font-size:.74rem;color:#888;}.btn{display:inline-block;padding:9px 20px;border:none;border-radius:6px;font-family:inherit;font-size:.9rem;cursor:pointer;font-weight:600;margin:4px;}@media print{body{background:#fff;padding:0;}.r{box-shadow:none;width:100%;}.np{display:none!important;}}</style></head><body><div class="r"><div class="hdr"><div class="sn">${settings.shopName||"আমার গ্রোসারি শপ"}</div>${settings.owner?`<div class="sub">${settings.owner}</div>`:""} ${settings.address?`<div class="sub">📍 ${settings.address}</div>`:""} ${settings.mobile?`<div class="sub">📞 ${settings.mobile}</div>`:""}</div><div class="meta"><span>🧾 রিসিট #${String(order.id).slice(-6)}</span><span>${d.toLocaleDateString("bn-BD",{day:"numeric",month:"short",year:"numeric"})} · ${d.toLocaleTimeString("bn-BD",{hour:"2-digit",minute:"2-digit"})}</span></div><div class="ci"><div><b>কাস্টমার:</b> ${order.name}</div><div><b>মোবাইল:</b> ${order.phone}</div>${order.area?`<div><b>এলাকা:</b> ${order.area}</div>`:""}<div><span class="ot">অर्डर নং #${order.orderNum}</span></div></div>${milestone?`<div class="ob">${milestone}</div>`:""}<table><thead><tr><th>আইটেম / পণ্য</th><th class="r2">মূল্য</th></tr></thead><tbody>${items.length>0?items.map(it=>`<tr><td>${it}</td><td class="r2">—</td></tr>`).join(""):`<tr><td colspan="2" style="text-align:center;color:#aaa;padding:10px">পণ্যের বিবরণ নেই</td></tr>`}<tr class="sr"><td>পণ্যের মূল্য</td><td class="r2">৳${sub.toLocaleString("en-US")}</td></tr>${del>0?`<tr class="dr"><td>🚴 ডেলিভারি চার্জ</td><td class="r2">৳${del.toLocaleString("en-US")}</td></tr>`:""}<tr class="sep"><td colspan="2"></td></tr><tr class="gr"><td>💰 সর্বমোট পরিশোধযোগ্য</td><td class="r2">৳${grand.toLocaleString("en-US")}</td></tr></tbody></table>${order.note?`<div class="nt">📝 নোট: ${order.note}</div>`:""}<div class="ftr"><div style="font-weight:600;color:#555;font-size:.8rem">${settings.footer||"ধন্যবাদ! আবার আসবেন।"}</div></div><div class="np" style="margin-top:16px;text-align:center"><button class="btn" style="background:#1a73e8;color:#fff" onclick="window.print()">🖨️ প্রিন্ট</button><button class="btn" style="background:#eee;color:#333" onclick="window.close()">বন্ধ</button></div></div></body></html>`;
+}
+
+function Receipt({ order, settings, onClose }) {
+if (!order) return null;
+const d = new Date(order.date);
+const items = order.items ? order.items.split(/[,\n]/).map(s => s.trim()).filter(Boolean) : [];
+const sub = safeNum(order.amount), del = safeNum(order.deliveryCharge);
+const grand = safeNum(order.grandTotal) || (sub + del);
+const milestone = order.orderNum === 2 ? `🎉 ২য় অর্ডার! ${settings.offer2 || ""}` : order.orderNum === 20 ? `🏆 ২০তম! ${settings.offer20 || ""}` : "";
+
+const doPrint = () => {
+const html = makeReceiptHTML(order, settings);
+const iframe = document.createElement("iframe");
+iframe.style.cssText = "position:fixed;top:-9999px;left:-9999px;width:420px;height:600px;border:none;";
+document.body.appendChild(iframe);
+iframe.contentDocument.open(); iframe.contentDocument.write(html); iframe.contentDocument.close();
+setTimeout(() => { try { iframe.contentWindow.focus(); iframe.contentWindow.print(); } catch(e) { doDownload(); } setTimeout(() => document.body.removeChild(iframe), 3000); }, 900);
+};
+const doDownload = () => {
+const blob = new Blob([makeReceiptHTML(order, settings)], { type: "text/html;charset=utf-8" });
+const a = document.createElement("a"); a.href = URL.createObjectURL(blob);
+a.download = `রিসিট_${order.name}_#${order.orderNum}.html`;
+document.body.appendChild(a); a.click(); document.body.removeChild(a);
+};
+const td = (x={}) => ({ padding: "5px 8px", borderBottom: "1px solid #f0f0f0", ...x });
+const th = (x={}) => ({ background: "#f5f5f5", padding: "6px 8px", textAlign: "left", borderBottom: "2px solid #ddd", fontWeight: 600, ...x });
+return (
+<div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.82)", zIndex: 500, display: "flex", alignItems: "center", justifyContent: "center", padding: 14, overflowY: "auto" }}>
+<div style={{ background: "#1c2128", border: "1px solid #30363d", borderRadius: 14, padding: "20px 18px 16px", width: "100%", maxWidth: 440, maxHeight: "95vh", overflowY: "auto" }}>
+<div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
+<div style={{ fontWeight: 700, fontSize: ".98rem" }}>🧾 কাস্টমার রিসিট</div>
+<button onClick={onClose} style={{ background: "none", border: "none", color: "#8b949e", fontSize: "1.2rem", cursor: "pointer" }}>✕</button>
+</div>
+<div style={{ background: "#fff", color: "#000", borderRadius: 8, padding: "18px 16px", fontFamily: "'Hind Siliguri',sans-serif" }}>
+<div style={{ textAlign: "center", borderBottom: "2px dashed #ccc", paddingBottom: 11, marginBottom: 11 }}>
+<div style={{ fontSize: "1.15rem", fontWeight: 700 }}>{settings.shopName || "আমার গ্রোসারি শপ"}</div>
+{settings.owner && <div style={{ fontSize: ".76rem", color: "#444" }}>{settings.owner}</div>}
+{settings.address && <div style={{ fontSize: ".73rem", color: "#666" }}>📍 {settings.address}</div>}
+{settings.mobile && <div style={{ fontSize: ".73rem", color: "#666" }}>📞 {settings.mobile}</div>}
+</div>
+<div style={{ display: "flex", justifyContent: "space-between", fontSize: ".72rem", color: "#777", marginBottom: 9, background: "#f8f8f8", padding: "5px 7px", borderRadius: 4 }}>
+<span>🧾 #{String(order.id).slice(-6)}</span>
+<span>{d.toLocaleDateString("bn-BD", { day: "numeric", month: "short" })} · {fmtTime(order.date)}</span>
+</div>
+<div style={{ background: "#f9f9f9", borderLeft: "3px solid #f0883e", padding: "7px 11px", marginBottom: 9, fontSize: ".78rem", lineHeight: 1.75 }}>
+<div><b>কাস্টমার:</b> {order.name}</div>
+<div><b>মোবাইল:</b> {order.phone}</div>
+{order.area && <div><b>এলাকা:</b> {order.area}</div>}
+<span style={{ background: "#e8f0fe", color: "#1a5fcc", fontSize: ".69rem", padding: "1px 6px", borderRadius: 10 }}>অর্ডার নং #{order.orderNum}</span>
+</div>
+{milestone && <div style={{ background: "#fffbea", border: "1px solid #f0c040", borderRadius: 6, padding: "7px 11px", marginBottom: 9, fontSize: ".78rem", color: "#7a5c00", textAlign: "center", fontWeight: 600 }}>{milestone}</div>}
+<table style={{ width: "100%", borderCollapse: "collapse", fontSize: ".78rem" }}>
+<thead><tr><th style={th()}>আইটেম</th><th style={th({ textAlign: "right" })}>মূল্য</th></tr></thead>
+<tbody>
+{items.length > 0 ? items.map((it, i) => <tr key={i}><td style={td()}>{it}</td><td style={td({ textAlign: "right", color: "#aaa" })}>—</td></tr>) : <tr><td colSpan={2} style={{ textAlign: "center", color: "#aaa", padding: "8px" }}>পণ্যের বিবরণ নেই</td></tr>}
+<tr style={{ background: "#fafafa" }}><td style={td({ color: "#666", fontSize: ".75rem" })}>পণ্যের মূল্য</td><td style={td({ textAlign: "right", color: "#666", fontSize: ".75rem" })}>৳{fmtAmt(sub)}</td></tr>
+{del > 0 && <tr style={{ background: "#fff8f2" }}><td style={td({ color: "#b85c00", fontSize: ".75rem" })}>🚴 ডেলিভারি চার্জ</td><td style={td({ textAlign: "right", color: "#b85c00", fontSize: ".75rem" })}>৳{fmtAmt(del)}</td></tr>}
+<tr><td colSpan={2} style={{ borderBottom: "2px dashed #ccc", padding: "1px 0" }} /></tr>
+<tr style={{ background: "#1c1c1c", color: "#fff" }}>
+<td style={{ padding: "8px", fontWeight: 700, fontSize: ".9rem" }}>💰 সর্বমোট</td>
+<td style={{ padding: "8px", textAlign: "right", fontWeight: 700, fontSize: ".98rem", color: "#4ade80" }}>৳{fmtAmt(grand)}</td>
+</tr>
+</tbody>
+</table>
+{order.note && <div style={{ fontSize: ".72rem", color: "#888", padding: "6px 0" }}>📝 {order.note}</div>}
+<div style={{ textAlign: "center", marginTop: 11, borderTop: "2px dashed #ccc", paddingTop: 11, fontSize: ".72rem", color: "#888" }}>
+<div style={{ fontWeight: 600, color: "#555" }}>{settings.footer || "ধন্যবাদ! আবার আসবেন।"}</div>
+</div>
+</div>
+<div style={{ display: "flex", gap: 8, marginTop: 12, flexWrap: "wrap" }}>
+<button onClick={doPrint} style={{ ...btnS("info"), flex: 1, justifyContent: "center" }}>🖨️ প্রিন্ট</button>
+<button onClick={doDownload} style={{ ...btnS("success"), flex: 1, justifyContent: "center" }}>⬇️ ডাউনলোড</button>
+<button onClick={onClose} style={{ ...btnS("outline"), padding: "9px 14px" }}>বন্ধ</button>
+</div>
+<div style={{ marginTop: 8, fontSize: ".7rem", color: "#8b949e", textAlign: "center" }}>💡 ডাউনলোড → ফাইল খুলুন → ব্রাউজার থেকে প্রিন্ট/PDF করুন</div>
+</div>
+</div>
+);
+}
+
+// ─── LOGIN ────────────────────────────────────────────────────
+function LoginScreen({ onLogin }) {
+const [un, setUn] = useState(""); const [pw, setPw] = useState("");
+const [err, setErr] = useState(""); const [busy, setBusy] = useState(false);
+const inp = { background: "#21262d", border: "1px solid #30363d", borderRadius: 8, padding: "11px 14px", color: "#e6edf3", fontFamily: "inherit", fontSize: "1rem", outline: "none", width: "100%", marginTop: 4 };
+const doLogin = async () => {
+if (!un.trim() || !pw.trim()) { setErr("ইউজারনেম ও পাসওয়ার্ড দিন।"); return; }
+setBusy(true); setErr("");
+try {
+let adminPwd = "admin123";
+try { const ap = await window.localStorage.getItem(KEY_ADMINPWD); if (ap) adminPwd = JSON.parse(ap).password; } catch (e) {}
+let users = [{ username: "admin", password: adminPwd, role: "admin", name: "Admin" }];
+try { const r = await window.localStorage.getItem(KEY_USERS); if (r) users = [...users, ...JSON.parse(r)]; } catch (e) {}
+const user = users.find(u => u.username === un.trim() && u.password === pw.trim());
+if (!user) { setErr("❌ ভুল ইউজারনেম বা পাসওয়ার্ড।"); setBusy(false); return; }
+const sess = { username: user.username, name: user.name, role: user.role, loginAt: new Date().toISOString() };
+await window.localStorage.setItem(KEY_SESSION, JSON.stringify(sess));
+onLogin(sess);
+} catch (e) { setErr("সংযোগ ত্রুটি।"); }
+setBusy(false);
+};
+return (
+<div style={{ minHeight: "100vh", background: "#0d1117", display: "flex", alignItems: "center", justifyContent: "center", padding: 16, fontFamily: "'Hind Siliguri',sans-serif" }}>
+<link href="https://fonts.googleapis.com/css2?family=Hind+Siliguri:wght@400;600;700&display=swap" rel="stylesheet" />
+<div style={{ width: "100%", maxWidth: 370 }}>
+<div style={{ textAlign: "center", marginBottom: 28 }}>
+<div style={{ fontSize: "3rem", marginBottom: 8 }}>🛒</div>
+<div style={{ fontSize: "1.5rem", fontWeight: 700, color: "#f0883e" }}>গ্রোসারি CRM</div>
+<div style={{ fontSize: ".82rem", color: "#8b949e", marginTop: 4 }}>শুধুমাত্র অনুমোদিত ব্যক্তি লগইন করতে পারবেন</div>
+</div>
+<div style={{ background: "#161b22", border: "1px solid #30363d", borderRadius: 14, padding: "26px 22px" }}>
+<div style={{ fontWeight: 700, marginBottom: 18 }}>🔐 লগইন করুন</div>
+<div style={{ marginBottom: 13 }}>
+<label style={{ fontSize: ".78rem", color: "#8b949e" }}>ইউজারনেম</label>
+<input value={un} onChange={e => setUn(e.target.value)} placeholder="username" style={inp} onKeyDown={e => e.key === "Enter" && doLogin()} />
+</div>
+<div style={{ marginBottom: 16 }}>
+<label style={{ fontSize: ".78rem", color: "#8b949e" }}>পাসওয়ার্ড</label>
+<input type="password" value={pw} onChange={e => setPw(e.target.value)} placeholder="••••••••" style={inp} onKeyDown={e => e.key === "Enter" && doLogin()} />
+</div>
+{err && <div style={{ background: "#2a0a0a", border: "1px solid #f85149", borderRadius: 7, padding: "8px 12px", marginBottom: 12, fontSize: ".82rem", color: "#f85149" }}>{err}</div>}
+<button onClick={doLogin} disabled={busy} style={{ width: "100%", padding: 12, background: busy ? "#555" : "#f0883e", color: "#fff", border: "none", borderRadius: 8, fontFamily: "inherit", fontSize: "1rem", fontWeight: 700, cursor: busy ? "not-allowed" : "pointer" }}>
+{busy ? "লগইন হচ্ছে..." : "✅ লগইন করুন"}
+</button>
+<div style={{ marginTop: 14, padding: "9px 12px", background: "#21262d", borderRadius: 7, fontSize: ".73rem", color: "#8b949e", lineHeight: 1.7 }}>
+💡 প্রথমবার: <b style={{ color: "#e6edf3" }}>admin</b> / <b style={{ color: "#e6edf3" }}>admin123</b><br />লগইনের পরে সেটিংস থেকে পাসওয়ার্ড পরিবর্তন করুন।
+</div>
+</div>
+</div>
+</div>
+);
+}
+
+// ─── ROOT COMPONENT ───────────────────────────────────────────
+export default function App() {
+const [session, setSession] = useState(null);
+const [authDone, setAuthDone] = useState(false);
+
+useEffect(() => {
+(() => {
+try {
+const r = window.localStorage.getItem(KEY_SESSION);
+if (r) setSession(JSON.parse(r));
+} catch (e) {}
+setAuthDone(true);
+})();
+}, []);
+
+const logout = async () => {
+try { window.localStorage.removeItem(KEY_SESSION); } catch (e) {}
+setSession(null);
+};
+
+if (!authDone) return (
+<div style={{ minHeight: "100vh", background: "#0d1117", display: "flex", alignItems: "center", justifyContent: "center", flexDirection: "column", gap: 12, color: "#58a6ff", fontFamily: "'Hind Siliguri',sans-serif" }}>
+<link href="https://fonts.googleapis.com/css2?family=Hind+Siliguri:wght@400;700&display=swap" rel="stylesheet" />
+<div style={{ fontSize: "2.5rem" }}>🛒</div><div>লোড হচ্ছে...</div>
+</div>
+);
+
+if (!session) return <LoginScreen onLogin={setSession} />;
+return <AppInner session={session} onLogout={logout} />;
+}
+
+// ─── MAIN APP ─────────────────────────────────────────────────
+function AppInner({ session, onLogout }) {
+const [tab, setTab] = useState("order");
+const [dbLoading, setDbLoading] = useState(true);
+const [saving, setSaving] = useState(false);
+const [customers, setCustomers] = useState({});
+const [orders, setOrders] = useState([]);
+const [settings, setSettings] = useState({ shopName: "আমার গ্রোসারি শপ", owner: "", address: "", mobile: "", footer: "ধন্যবাদ! আবার আসবেন।", offer2: "", offer20: "" });
+const [notif, setNotif] = useState({ show: false });
+const [receipt, setReceipt] = useState(null);
+const notifTimer = useRef(null);
+
+const [oPhone, setOPhone] = useState(""); const [oName, setOName] = useState(""); const [oArea, setOArea] = useState("");
+const [oItems, setOItems] = useState(""); const [oAmount, setOAmount] = useState(""); const [oDelivery, setODelivery] = useState(""); const [oNote, setONote] = useState("");
+const [custPreview, setCustPreview] = useState(null); const [isNewCust, setIsNewCust] = useState(false);
+
+const [searchPhone, setSearchPhone] = useState(""); const [searchResult, setSearchResult] = useState(null);
+
+const [qName, setQName] = useState(""); const [qArea, setQArea] = useState(""); const [qItems, setQItems] = useState(""); const [qAmount, setQAmount] = useState(""); const [qDelivery, setQDelivery] = useState(""); const [qNote, setQNote] = useState("");
+
+const [custFilter, setCustFilter] = useState(""); const [custSort, setCustSort] = useState("orders");
+const [logDate, setLogDate] = useState(todayStr()); const [exportRange, setExportRange] = useState("all");
+
+const [users, setUsers] = useState([]);
+const [newUser, setNewUser] = useState({ username: "", password: "", name: "" });
+const [myPwd, setMyPwd] = useState({ old: "", n1: "", n2: "" });
+const [userMsg, setUserMsg] = useState("");
+
+useEffect(() => {
+(() => {
+setDbLoading(true);
+try {
+const dr = window.localStorage.getItem(KEY_DB);
+if (dr) { const p = JSON.parse(dr); setCustomers(p.customers || {}); setOrders(p.orders || []); }
+const sr = window.localStorage.getItem(KEY_SET);
+if (sr) setSettings(s => ({ ...s, ...JSON.parse(sr) }));
+} catch (e) {}
+setDbLoading(false);
+})();
+}, []);
+
+useEffect(() => {
+if (tab === "settings") {
+(() => {
+try { const r = window.localStorage.getItem(KEY_USERS); if (r) setUsers(JSON.parse(r)); } catch (e) {}
+})();
+}
+}, [tab]);
+
+const persist = useCallback(async (c, o) => {
+setSaving(true);
+try { window.localStorage.setItem(KEY_DB, JSON.stringify({ customers: c, orders: o })); } catch (e) {}
+setSaving(false);
+}, []);
+
+const persistSettings = async (s) => {
+try { window.localStorage.setItem(KEY_SET, JSON.stringify(s)); } catch (e) {}
+};
+
+const saveUsers = async (arr) => {
+try { window.localStorage.setItem(KEY_USERS, JSON.stringify(arr)); setUsers(arr); } catch (e) {}
+};
+
+const notify = (title, msg, type = "success") => {
+clearTimeout(notifTimer.current);
+setNotif({ show: true, title, msg, type });
+notifTimer.current = setTimeout(() => setNotif(n => ({ ...n, show: false })), 4000);
+};
+
+const onPhoneChange = (val) => {
+setOPhone(val); setIsNewCust(false); setCustPreview(null);
+if (val.length < 8) return;
+const c = customers[val];
+if (!c) { if (val.length >= 10) { setIsNewCust(true); setOName(""); setOArea(""); } return; }
+const cnt = getCustOrders(orders, val).length;
+setOName(c.name); setOArea(c.area || "");
+setCustPreview({ ...c, count: cnt });
+};
+
+const addOrder = async () => {
+if (!oPhone || oPhone.length < 10) { notify("❌ ত্রুটি", "সঠিক মোবাইল নম্বর দিন।", "error"); return; }
+if (!oName.trim()) { notify("❌ ত্রুটি", "কাস্টমারের নাম দিন।", "error"); return; }
+const nc = { ...customers };
+if (!nc[oPhone]) nc[oPhone] = { name: oName.trim(), phone: oPhone, area: oArea.trim(), createdAt: new Date().toISOString() };
+else nc[oPhone] = { ...nc[oPhone], name: oName.trim(), area: oArea.trim() || nc[oPhone].area };
+const orderNum = getCustOrders(orders, oPhone).length + 1;
+const amount = safeNum(oAmount), deliveryCharge = safeNum(oDelivery), grandTotal = amount + deliveryCharge;
+const newOrder = { id: Date.now(), phone: oPhone, name: oName.trim(), area: oArea.trim(), items: oItems.trim(), amount, deliveryCharge, grandTotal, note: oNote.trim(), date: new Date().toISOString(), orderNum };
+const no = [...orders, newOrder];
+setCustomers(nc); setOrders(no);
+await persist(nc, no);
+notify("অর্ডার সেভ ✅", orderNum === 2 ? `🎉 ${oName}-এর ২য় অর্ডার!` : orderNum === 20 ? `🏆 ${oName}-এর ২০তম!` : `${oName}-এর অর্ডার #${orderNum} সেভ হয়েছে।`);
+setOPhone(""); setOName(""); setOArea(""); setOItems(""); setOAmount(""); setODelivery(""); setONote(""); setCustPreview(null); setIsNewCust(false);
+setTimeout(() => setReceipt(newOrder), 350);
+};
+
+const quickAdd = async () => {
+if (!qName.trim()) { notify("❌ ত্রুটি", "নাম দিন।", "error"); return; }
+const phone = searchPhone;
+const nc = { ...customers };
+if (!nc[phone]) nc[phone] = { name: qName.trim(), phone, area: qArea.trim(), createdAt: new Date().toISOString() };
+const orderNum = getCustOrders(orders, phone).length + 1;
+const amount = safeNum(qAmount), deliveryCharge = safeNum(qDelivery), grandTotal = amount + deliveryCharge;
+const newOrder = { id: Date.now(), phone, name: qName.trim(), area: qArea.trim(), items: qItems.trim(), amount, deliveryCharge, grandTotal, note: qNote.trim(), date: new Date().toISOString(), orderNum };
+const no = [...orders, newOrder];
+setCustomers(nc); setOrders(no);
+await persist(nc, no);
+notify("অর্ডার সেভ ✅", `${qName}-এর অর্ডার #${orderNum} যোগ হয়েছে।`);
+setQName(""); setQArea(""); setQItems(""); setQAmount(""); setQDelivery(""); setQNote("");
+setSearchResult(nc[phone]);
+setTimeout(() => setReceipt(newOrder), 350);
+};
+
+const doSearch = (ph) => {
+setSearchPhone(ph);
+if (ph.length < 7) { setSearchResult(null); return; }
+const m = Object.values(customers).filter(c => c.phone.includes(ph));
+setSearchResult(m.length > 0 ? m[0] : "new");
+};
+
+const addUser = async () => {
+if (!newUser.username.trim() || !newUser.password.trim() || !newUser.name.trim()) { setUserMsg("❌ সব ঘর পূরণ করুন।"); return; }
+if (newUser.username === "admin") { setUserMsg("❌ 'admin' নাম ব্যবহার করা যাবে না।"); return; }
+if (users.find(u => u.username === newUser.username)) { setUserMsg("❌ এই ইউজারনেম আগে থেকেই আছে।"); return; }
+const arr = [...users, { ...newUser, role: "subadmin", createdAt: new Date().toISOString() }];
+await saveUsers(arr);
+setNewUser({ username: "", password: "", name: "" });
+setUserMsg("✅ সাব-অ্যাডমিন যোগ হয়েছে।");
+};
+const removeUser = async (uname) => {
+if (!confirm(`"${uname}" মুছবেন?`)) return;
+await saveUsers(users.filter(u => u.username !== uname));
+setUserMsg("✅ ইউজার মুছা হয়েছে।");
+};
+const changePwd = async () => {
+if (!myPwd.n1) { setUserMsg("❌ নতুন পাসওয়ার্ড দিন।"); return; }
+if (myPwd.n1 !== myPwd.n2) { setUserMsg("❌ পাসওয়ার্ড দুটো মিলছে না।"); return; }
+if (session.role === "admin") {
+await window.localStorage.setItem(KEY_ADMINPWD, JSON.stringify({ password: myPwd.n1 }));
+} else {
+await saveUsers(users.map(u => u.username === session.username ? { ...u, password: myPwd.n1 } : u));
+}
+setUserMsg("✅ পাসওয়ার্ড পরিবর্তন হয়েছে।");
+setMyPwd({ old: "", n1: "", n2: "" });
+};
+
+const xlsxExport = (type) => {
+const wb = XLSX.utils.book_new(); const td = todayStr();
+const custRows = [["নাম", "মোবাইল", "এলাকা", "মোট অর্ডার", "মোট টাকা", "গড় অর্ডার", "প্রথম অর্ডার", "শেষ অর্ডার"]];
+Object.values(customers).forEach(c => { const os = getCustOrders(orders, c.phone), cnt = os.length, tot = getCustTotal(orders, c.phone); custRows.push([c.name, c.phone, c.area || "", cnt, tot, cnt ? Math.round(tot / cnt) : 0, os[0]?.date.slice(0, 10) || "", os[os.length - 1]?.date.slice(0, 10) || ""]); });
+const ordRows = (ords) => { const r = [["তারিখ", "সময়", "কাস্টমার", "মোবাইল", "এলাকা", "অর্ডার নং", "আইটেম", "পণ্য মূল্য", "ডেলিভারি", "সর্বমোট", "অফার", "নোট"]]; ords.sort((a, b) => new Date(b.date) - new Date(a.date)).forEach(o => { const d = new Date(o.date); r.push([d.toLocaleDateString("bn-BD"), d.toLocaleTimeString("bn-BD", { hour: "2-digit", minute: "2-digit" }), o.name, o.phone, o.area || "", o.orderNum, o.items || "", safeNum(o.amount), safeNum(o.deliveryCharge), getGrand(o), o.orderNum === 2 ? "২য় অর্ডার" : o.orderNum === 20 ? "২০তম" : "", o.note || ""]); }); return r; };
+if (type === "full") {
+XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(custRows), "কাস্টমার");
+XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(ordRows(orders)), "সব অর্ডার");
+XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(ordRows(orders.filter(o => o.date.slice(0, 10) === td))), "আজকের অর্ডার");
+XLSX.writeFile(wb, `গ্রোসারি_সম্পূর্ণ_${td}.xlsx`);
+} else if (type === "customers") { XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(custRows), "কাস্টমার"); XLSX.writeFile(wb, `কাস্টমার_${td}.xlsx`); }
+else if (type === "orders") { XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(ordRows(orders)), "অর্ডার"); XLSX.writeFile(wb, `অর্ডার_হিস্ট্রি_${td}.xlsx`); }
+else if (type === "today") { XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(ordRows(orders.filter(o => o.date.slice(0, 10) === td))), "আজ"); XLSX.writeFile(wb, `আজকের_রিপোর্ট_${td}.xlsx`); }
+notify("Excel ✅", ".xlsx ফাইল ডাউনলোড হয়েছে।");
+};
+
+const csvExport = () => {
+const td = todayStr(); let ords = orders;
+if (exportRange === "today") ords = ords.filter(o => o.date.slice(0, 10) === td);
+else if (exportRange === "week") { const w = new Date(); w.setDate(w.getDate() - 7); ords = ords.filter(o => new Date(o.date) >= w); }
+else if (exportRange === "month") { const m = new Date(); m.setMonth(m.getMonth() - 1); ords = ords.filter(o => new Date(o.date) >= m); }
+const rows = [["তারিখ", "সময়", "নাম", "মোবাইল", "এলাকা", "অর্ডার নং", "আইটেম", "পণ্য মূল্য", "ডেলিভারি", "সর্বমোট", "অফার", "নোট"]];
+ords.sort((a, b) => new Date(b.date) - new Date(a.date)).forEach(o => { const d = new Date(o.date); rows.push([d.toLocaleDateString("bn-BD"), d.toLocaleTimeString("bn-BD", { hour: "2-digit", minute: "2-digit" }), o.name, o.phone, o.area || "", o.orderNum, o.items || "", safeNum(o.amount), safeNum(o.deliveryCharge), getGrand(o), o.orderNum === 2 ? "২য়" : o.orderNum === 20 ? "২০তম" : "", o.note || ""]); });
+const csv = rows.map(r => r.map(c => `"${String(c).replace(/"/g, '""')}"`).join(",")).join("\n");
+const blob = new Blob(["\uFEFF" + csv], { type: "text/csv;charset=utf-8;" });
+const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = `রিপোর্ট_${td}.csv`; a.click();
+notify("CSV ✅", `${ords.length}টি অর্ডার এক্সপোর্ট হয়েছে।`);
+};
+
+const backupJSON = () => {
+const blob = new Blob([JSON.stringify({ customers, orders, settings, exportedAt: new Date().toISOString() }, null, 2)], { type: "application/json" });
+const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = `backup_${todayStr()}.json`; a.click();
+notify("ব্যাকআপ ✅", "JSON ফাইল ডাউনলোড হয়েছে।");
+};
+
+const importJSON = (e) => {
+const file = e.target.files[0]; if (!file) return;
+const r = new FileReader();
+r.onload = async (ev) => {
+try {
+const d = JSON.parse(ev.target.result);
+if (d.customers && d.orders) {
+setCustomers(d.customers); setOrders(d.orders);
+if (d.settings) setSettings(s => ({ ...s, ...d.settings }));
+await persist(d.customers, d.orders);
+notify("লোড ✅", "ব্যাকআপ পুনরুদ্ধার সফল।");
+} else notify("❌", "ফাইল ফরম্যাট সঠিক নয়।", "error");
+} catch { notify("❌", "JSON পার্স ব্যর্থ।", "error"); }
+};
+r.readAsText(file);
+};
+
+const custList = Object.values(customers);
+const todayOrders = orders.filter(o => o.date.slice(0, 10) === todayStr());
+const todayRevenue = todayOrders.reduce((s, o) => s + getGrand(o), 0);
+const offerAlert2 = custPreview?.count === 1;
+const offerAlert20 = custPreview?.count === 19;
+let displayCusts = custList.filter(c => c.name.toLowerCase().includes(custFilter.toLowerCase()) || c.phone.includes(custFilter));
+if (custSort === "orders") displayCusts.sort((a, b) => getCustOrders(orders, b.phone).length - getCustOrders(orders, a.phone).length);
+if (custSort === "name") displayCusts.sort((a, b) => a.name.localeCompare(b.name, "bn"));
+if (custSort === "recent") displayCusts.sort((a, b) => { const ao = getCustOrders(orders, a.phone), bo = getCustOrders(orders, b.phone); return (bo.length ? new Date(bo[bo.length - 1].date) : 0) - (ao.length ? new Date(ao[ao.length - 1].date) : 0); });
+if (custSort === "amount") displayCusts.sort((a, b) => getCustTotal(orders, b.phone) - getCustTotal(orders, a.phone));
+const logOrders = orders.filter(o => o.date.slice(0, 10) === logDate).sort((a, b) => new Date(b.date) - new Date(a.date));
+const logTotal = logOrders.reduce((s, o) => s + getGrand(o), 0);
+const logDel = logOrders.reduce((s, o) => s + safeNum(o.deliveryCharge), 0);
+
+const S = {
+card: { background: "#161b22", border: "1px solid #30363d", borderRadius: 10, padding: 18, marginBottom: 14 },
+cardTitle: { fontWeight: 700, fontSize: ".97rem", marginBottom: 14, display: "flex", alignItems: "center", gap: 7 },
+row: { display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(165px,1fr))", gap: 11, marginBottom: 11 },
+inp: { background: "#21262d", border: "1px solid #30363d", borderRadius: 8, padding: "9px 12px", color: "#e6edf3", fontFamily: "inherit", fontSize: ".9rem", outline: "none", width: "100%" },
+label: { fontSize: ".76rem", color: "#8b949e", fontWeight: 500, display: "block", marginBottom: 4 },
+};
+
+const tabs = [
+{ id: "order", label: "➕ অর্ডার" }, { id: "search", label: "🔍 সার্চ" },
+{ id: "customers", label: "👥 কাস্টমার" }, { id: "log", label: "📋 দৈনিক লগ" },
+...(session.role === "admin" ? [{ id: "export", label: "📤 এক্সপোর্ট" }] : []),
+{ id: "settings", label: "⚙️ সেটিংস" },
+];
+
+if (dbLoading) return (
+<div style={{ minHeight: "100vh", background: "#0d1117", display: "flex", alignItems: "center", justifyContent: "center", flexDirection: "column", gap: 12, color: "#58a6ff", fontFamily: "'Hind Siliguri',sans-serif" }}>
+<div style={{ fontSize: "2.5rem" }}>🛒</div><div>ডেটা লোড হচ্ছে...</div>
+</div>
+);
+
+return (
+<div style={{ fontFamily: "'Hind Siliguri',sans-serif", background: "#0d1117", color: "#e6edf3", minHeight: "100vh" }}>
+<link href="https://fonts.googleapis.com/css2?family=Hind+Siliguri:wght@400;500;600;700&display=swap" rel="stylesheet" />
+<style>{`.badge{display:inline-block;padding:2px 8px;border-radius:20px;font-size:.67rem;font-weight:600;}.badge.new{background:#1f4f2a;color:#3fb950;}.badge.blue{background:#1a3a5c;color:#58a6ff;}.badge.gold{background:#3d2a00;color:#e3b341;}.badge.purple{background:#2d1f4f;color:#bc8cff;}*{box-sizing:border-box;}`}</style>
+
+{/* HEADER */}
+<header style={{ background: "#161b22", borderBottom: "1px solid #30363d", padding: "0 16px", display: "flex", alignItems: "center", justifyContent: "space-between", height: 56, position: "sticky", top: 0, zIndex: 100 }}>
+<div style={{ fontWeight: 700, fontSize: "1.05rem", color: "#f0883e", display: "flex", alignItems: "center", gap: 8 }}>
+🛒 গ্রোসারি CRM {saving && <span style={{ fontSize: ".65rem", background: "#21262d", color: "#8b949e", padding: "2px 7px", borderRadius: 10 }}>সেভ…</span>}
+</div>
+<div style={{ display: "flex", gap: 12, alignItems: "center" }}>
+<div style={{ textAlign: "center" }}><div style={{ fontSize: ".92rem", fontWeight: 700, color: "#58a6ff" }}>{todayOrders.length}</div><div style={{ fontSize: ".58rem", color: "#8b949e" }}>আজ অর্ডার</div></div>
+<div style={{ textAlign: "center" }}><div style={{ fontSize: ".92rem", fontWeight: 700, color: "#3fb950" }}>৳{fmtAmt(todayRevenue)}</div><div style={{ fontSize: ".58rem", color: "#8b949e" }}>আজ বিক্রয়</div></div>
+<div style={{ display: "flex", alignItems: "center", gap: 7, background: "#21262d", border: "1px solid #30363d", borderRadius: 8, padding: "5px 10px" }}>
+<span>{session.role === "admin" ? "👑" : "👤"}</span>
+<div><div style={{ fontSize: ".76rem", fontWeight: 600, lineHeight: 1 }}>{session.name}</div><div style={{ fontSize: ".6rem", color: "#8b949e" }}>{session.role === "admin" ? "অ্যাডমিন" : "সাব-অ্যাডমিন"}</div></div>
+<button onClick={onLogout} style={{ background: "none", border: "none", color: "#f85149", cursor: "pointer", fontSize: ".95rem", padding: 0 }}>⏻</button>
+</div>
+</div>
+</header>
+
+<div style={{ maxWidth: 1260, margin: "0 auto", padding: "16px 13px" }}>
+{/* TABS */}
+<div style={{ display: "flex", gap: 3, background: "#161b22", border: "1px solid #30363d", borderRadius: 10, padding: 4, marginBottom: 16, flexWrap: "wrap" }}>
+{tabs.map(t => (
+<button key={t.id} onClick={() => setTab(t.id)} style={{ flex: 1, minWidth: 65, padding: "8px 6px", border: "none", background: tab === t.id ? "#f0883e" : "transparent", color: tab === t.id ? "#fff" : "#8b949e", fontFamily: "inherit", fontSize: ".8rem", cursor: "pointer", borderRadius: 7, fontWeight: 600, whiteSpace: "nowrap" }}>
+{t.label}
+</button>
+))}
+</div>
+
+{/* ══ ORDER ══ */}
+{tab === "order" && (
+<div>
+{offerAlert2 && <div style={{ background: "linear-gradient(135deg,#001a30,#00264d)", border: "1px solid #58a6ff", borderRadius: 10, padding: "12px 16px", marginBottom: 12, display: "flex", gap: 10, alignItems: "flex-start" }}><span style={{ fontSize: "1.6rem" }}>🎉</span><div><div style={{ fontWeight: 700, color: "#58a6ff", marginBottom: 2 }}>২য় অর্ডার অফার!</div><div style={{ fontSize: ".8rem", color: "#5090c0" }}>{settings.offer2 || `${oName} তার ২য় অর্ডার দিচ্ছেন। বিশেষ ছাড় দিন!`}</div></div></div>}
+{offerAlert20 && <div style={{ background: "linear-gradient(135deg,#2a1f00,#3d2f00)", border: "1px solid #e3b341", borderRadius: 10, padding: "12px 16px", marginBottom: 12, display: "flex", gap: 10, alignItems: "flex-start" }}><span style={{ fontSize: "1.6rem" }}>🏆</span><div><div style={{ fontWeight: 700, color: "#e3b341", marginBottom: 2 }}>২০তম মাইলস্টোন!</div><div style={{ fontSize: ".8rem", color: "#c9a340" }}>{settings.offer20 || `${oName} ২০তম অর্ডারে পৌঁছেছেন! বড় পুরস্কার দিন।`}</div></div></div>}
+<div style={S.card}>
+<div style={S.cardTitle}>📝 নতুন অর্ডার</div>
+<div style={{ display: "grid", gridTemplateColumns: "1fr auto", gap: 8, marginBottom: 9 }}>
+<div><label style={S.label}>📞 মোবাইল নম্বর *</label><input type="tel" maxLength={11} value={oPhone} onChange={e => onPhoneChange(e.target.value)} placeholder="01XXXXXXXXX" style={S.inp} /></div>
+<div style={{ display: "flex", alignItems: "flex-end" }}><button onClick={() => { setOPhone(""); setOName(""); setOArea(""); setOItems(""); setOAmount(""); setODelivery(""); setONote(""); setCustPreview(null); setIsNewCust(false); }} style={btnS("outline", true)}>✕ ক্লিয়ার</button></div>
+</div>
+{isNewCust && <div style={{ background: "linear-gradient(135deg,#0a2a0a,#0d3b0d)", border: "1px solid #3fb950", borderRadius: 8, padding: "9px 13px", marginBottom: 9, fontSize: ".82rem", display: "flex", gap: 8 }}><span>🆕</span><span style={{ color: "#3fb950", fontWeight: 600 }}>নতুন কাস্টমার!</span><span style={{ color: "#8b949e" }}>নিচে নাম দিন।</span></div>}
+{custPreview && (
+<div style={{ background: "#21262d", border: "1px solid #30363d", borderRadius: 8, padding: 11, marginBottom: 11 }}>
+<div style={{ display: "flex", alignItems: "center", gap: 11 }}>
+<div style={{ width: 48, height: 48, borderRadius: "50%", background: "linear-gradient(135deg,#f0883e,#58a6ff)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: "1.2rem", fontWeight: 700, color: "#fff", flexShrink: 0 }}>{custPreview.name[0]}</div>
+<div style={{ flex: 1 }}>
+<div style={{ fontWeight: 700 }}>{custPreview.name} <Badge count={custPreview.count} /></div>
+<div style={{ fontSize: ".76rem", color: "#8b949e" }}>{oPhone}{custPreview.area ? " · " + custPreview.area : ""}</div>
+<ProgBar count={custPreview.count} />
+</div>
+<div style={{ textAlign: "right", flexShrink: 0 }}>
+<div style={{ fontSize: "1.3rem", fontWeight: 700, color: "#58a6ff" }}>{custPreview.count}</div>
+<div style={{ fontSize: ".65rem", color: "#8b949e" }}>মোট অর্ডার</div>
+</div>
+</div>
+</div>
+)}
+<div style={S.row}>
+<div><label style={S.label}>কাস্টমারের নাম *</label><input type="text" value={oName} onChange={e => setOName(e.target.value)} placeholder="নাম লিখুন" style={S.inp} /></div>
+<div><label style={S.label}>এলাকা / মহল্লা</label><input type="text" value={oArea} onChange={e => setOArea(e.target.value)} placeholder="এলাকার নাম" style={S.inp} /></div>
+</div>
+<div style={S.row}>
+<div><label style={S.label}>📦 আইটেম</label><textarea value={oItems} onChange={e => setOItems(e.target.value)} placeholder="চাল ৫ কেজি, ডাল ১ কেজি..." rows={3} style={{ ...S.inp, resize: "vertical" }} /></div>
+<div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+<div><label style={S.label}>💰 পণ্যের মূল্য (৳)</label><input type="text" inputMode="numeric" value={oAmount} onChange={e => setOAmount(e.target.value)} placeholder="০ বা 0" style={S.inp} /></div>
+<div><label style={S.label}>🚴 ডেলিভারি চার্জ (৳)</label><input type="text" inputMode="numeric" value={oDelivery} onChange={e => setODelivery(e.target.value)} placeholder="০ বা 0" style={S.inp} /></div>
+<div><label style={S.label}>নোট</label><input type="text" value={oNote} onChange={e => setONote(e.target.value)} placeholder="বাকি, ছাড়..." style={S.inp} /></div>
+</div>
+</div>
+{(safeNum(oAmount) > 0 || safeNum(oDelivery) > 0) && (
+<div style={{ background: "#0d1f0d", border: "1px solid #3fb950", borderRadius: 8, padding: "11px 14px", marginBottom: 11, display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 8 }}>
+<div style={{ fontSize: ".8rem", color: "#8b949e", display: "flex", gap: 14, flexWrap: "wrap" }}>
+<span>পণ্য: <strong style={{ color: "#e6edf3" }}>৳{fmtAmt(safeNum(oAmount))}</strong></span>
+{safeNum(oDelivery) > 0 && <span>ডেলিভারি: <strong style={{ color: "#f0883e" }}>৳{fmtAmt(safeNum(oDelivery))}</strong></span>}
+</div>
+<div style={{ fontWeight: 700, fontSize: "1rem", color: "#3fb950" }}>সর্বমোট: ৳{fmtAmt(safeNum(oAmount) + safeNum(oDelivery))}</div>
+</div>
+)}
+<button onClick={addOrder} style={btnS("primary")}>✅ অর্ডার সেভ করুন</button>
+</div>
+</div>
+)}
+
+{/* ══ SEARCH ══ */}
+{tab === "search" && (
+<div style={S.card}>
+<div style={S.cardTitle}>🔍 কাস্টমার খুঁজুন</div>
+<div style={{ display: "flex", gap: 8, marginBottom: 14 }}>
+<input type="tel" maxLength={11} value={searchPhone} onChange={e => doSearch(e.target.value)} placeholder="মোবাইল নম্বর দিয়ে খুঁজুন..." style={{ ...S.inp, flex: 1 }} />
+<button onClick={() => doSearch(searchPhone)} style={btnS("info")}>খুঁজুন</button>
+</div>
+{searchResult === "new" && (
+<div style={{ border: "1px solid #3fb950", borderRadius: 10, padding: 16 }}>
+<div style={{ fontWeight: 700, color: "#3fb950", marginBottom: 5 }}>🆕 নতুন কাস্টমার — অর্ডার যোগ করুন</div>
+<p style={{ fontSize: ".8rem", color: "#8b949e", marginBottom: 12 }}>"{searchPhone}" নম্বরে কেউ নেই।</p>
+<div style={S.row}>
+<div><label style={S.label}>নাম *</label><input type="text" value={qName} onChange={e => setQName(e.target.value)} placeholder="কাস্টমারের নাম" style={S.inp} /></div>
+<div><label style={S.label}>এলাকা</label><input type="text" value={qArea} onChange={e => setQArea(e.target.value)} placeholder="এলাকা" style={S.inp} /></div>
+</div>
+<div style={S.row}>
+<div><label style={S.label}>আইটেম</label><textarea value={qItems} onChange={e => setQItems(e.target.value)} rows={2} style={{ ...S.inp, resize: "vertical" }} /></div>
+<div style={{ display: "flex", flexDirection: "column", gap: 7 }}>
+<div><label style={S.label}>পণ্য মূল্য (৳)</label><input type="text" inputMode="numeric" value={qAmount} onChange={e => setQAmount(e.target.value)} placeholder="০ বা 0" style={S.inp} /></div>
+<div><label style={S.label}>ডেলিভারি (৳)</label><input type="text" inputMode="numeric" value={qDelivery} onChange={e => setQDelivery(e.target.value)} placeholder="০ বা 0" style={S.inp} /></div>
+<div><label style={S.label}>নোট</label><input type="text" value={qNote} onChange={e => setQNote(e.target.value)} style={S.inp} /></div>
+</div>
+</div>
+{(safeNum(qAmount) > 0 || safeNum(qDelivery) > 0) && (
+<div style={{ background: "#0d1f0d", border: "1px solid #3fb950", borderRadius: 7, padding: "9px 13px", marginBottom: 11, display: "flex", justifyContent: "space-between", flexWrap: "wrap", gap: 6 }}>
+<span style={{ fontSize: ".78rem", color: "#8b949e" }}>পণ্য: <b style={{ color: "#e6edf3" }}>৳{fmtAmt(safeNum(qAmount))}</b>{safeNum(qDelivery) > 0 && <> · ডেলিভারি: <b style={{ color: "#f0883e" }}>৳{fmtAmt(safeNum(qDelivery))}</b></>}</span>
+<span style={{ fontWeight: 700, color: "#3fb950" }}>সর্বমোট: ৳{fmtAmt(safeNum(qAmount) + safeNum(qDelivery))}</span>
+</div>
+)}
+<button onClick={quickAdd} style={btnS("success")}>✅ অর্ডার যোগ করুন</button>
+</div>
+)}
+{searchResult && searchResult !== "new" && (() => {
+const c = searchResult; const ords = getCustOrders(orders, c.phone); const cnt = ords.length; const tot = getCustTotal(orders, c.phone); const last = ords[ords.length - 1];
+return (
+<div>
+<div style={{ display: "flex", alignItems: "center", gap: 13, marginBottom: 13 }}>
+<div style={{ width: 52, height: 52, borderRadius: "50%", background: "linear-gradient(135deg,#f0883e,#58a6ff)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: "1.3rem", fontWeight: 700, color: "#fff", flexShrink: 0 }}>{c.name[0]}</div>
+<div style={{ flex: 1 }}>
+<div style={{ fontWeight: 700, fontSize: "1rem" }}>{c.name} <Badge count={cnt} /></div>
+<div style={{ fontSize: ".77rem", color: "#8b949e" }}>📞 {c.phone}{c.area ? " · 📍" + c.area : ""}</div>
+<ProgBar count={cnt} />
+</div>
+<button onClick={() => { setTab("order"); setTimeout(() => onPhoneChange(c.phone), 50); setOPhone(c.phone); }} style={btnS("primary", true)}>➕ অর্ডার</button>
+</div>
+<div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(105px,1fr))", gap: 9, marginBottom: 13 }}>
+{[[cnt, "মোট অর্ডার", "#58a6ff"], ["৳" + tot.toLocaleString("en-US"), "মোট কেনাকাটা", "#3fb950"], [cnt > 0 ? "৳" + Math.round(tot / cnt).toLocaleString("en-US") : "—", "গড় অর্ডার", "#e3b341"], [last ? fmtDate(last.date) : "—", "শেষ অর্ডার", "#bc8cff"]].map(([v, l, clr]) => (
+<div key={l} style={{ background: "#21262d", border: "1px solid #30363d", borderRadius: 8, padding: "11px", textAlign: "center" }}>
+<div style={{ fontSize: "1.1rem", fontWeight: 700, color: clr }}>{v}</div>
+<div style={{ fontSize: ".66rem", color: "#8b949e", marginTop: 2 }}>{l}</div>
+</div>
+))}
+</div>
+<div style={{ fontWeight: 600, fontSize: ".86rem", marginBottom: 9 }}>📦 অর্ডার হিস্ট্রি</div>
+{ords.slice().reverse().map(o => (
+<div key={o.id} style={{ background: "#21262d", border: "1px solid #30363d", borderRadius: 8, padding: "9px 13px", marginBottom: 6, display: "flex", alignItems: "center", gap: 10 }}>
+<div style={{ width: 32, height: 32, borderRadius: "50%", background: o.orderNum === 20 ? "#e3b341" : o.orderNum === 2 ? "#58a6ff" : "#30363d", display: "flex", alignItems: "center", justifyContent: "center", fontSize: ".72rem", fontWeight: 700, color: o.orderNum === 20 ? "#000" : o.orderNum === 2 ? "#fff" : "#8b949e", flexShrink: 0 }}>{o.orderNum}</div>
+<div style={{ flex: 1 }}>
+<div style={{ fontSize: ".83rem" }}>{o.items || "(আইটেম নেই)"}</div>
+<div style={{ fontSize: ".7rem", color: "#8b949e" }}>{fmtDate(o.date)} {fmtTime(o.date)}{o.note ? " · " + o.note : ""}</div>
+</div>
+<div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 2 }}>
+<span style={{ fontWeight: 700, color: "#3fb950", fontSize: ".88rem" }}>৳{fmtAmt(getGrand(o))}</span>
+{safeNum(o.deliveryCharge) > 0 && <span style={{ fontSize: ".68rem", color: "#f0883e" }}>+৳{fmtAmt(o.deliveryCharge)} ডেলিভারি</span>}
+<button onClick={() => setReceipt(o)} style={btnS("outline", true)}>🧾</button>
+</div>
+</div>
+))}
+</div>
+);
+})()}
+</div>
+)}
+
+{/* ══ CUSTOMERS ══ */}
+{tab === "customers" && (
+<div style={S.card}>
+<div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 13, flexWrap: "wrap", gap: 8 }}>
+<div style={{ fontWeight: 700 }}>👥 কাস্টমার ({displayCusts.length})</div>
+<div style={{ display: "flex", gap: 7, flexWrap: "wrap" }}>
+<input type="text" value={custFilter} onChange={e => setCustFilter(e.target.value)} placeholder="নাম বা নম্বর..." style={{ ...S.inp, width: 155, padding: "7px 10px", fontSize: ".8rem" }} />
+<select value={custSort} onChange={e => setCustSort(e.target.value)} style={{ ...S.inp, width: "auto", padding: "7px 10px", fontSize: ".8rem" }}>
+<option value="orders">অর্ডার সংখ্যা</option><option value="name">নাম</option>
+<option value="recent">সাম্প্রতিক</option><option value="amount">মোট টাকা</option>
+</select>
+</div>
+</div>
+{displayCusts.length === 0
+? <div style={{ textAlign: "center", padding: "36px", color: "#8b949e" }}>👥 কোনো কাস্টমার নেই।</div>
+: <div style={{ overflowX: "auto" }}><table style={{ width: "100%", borderCollapse: "collapse" }}>
+<thead><tr>{["#", "নাম", "মোবাইল", "অর্ডার", "মোট টাকা", "স্ট্যাটাস", ""].map(h => <th key={h} style={{ background: "#21262d", padding: "8px 11px", textAlign: "left", fontSize: ".71rem", color: "#8b949e", fontWeight: 600, textTransform: "uppercase", letterSpacing: ".05em", borderBottom: "1px solid #30363d" }}>{h}</th>)}</tr></thead>
+<tbody>{displayCusts.map((c, i) => {
+const cnt = getCustOrders(orders, c.phone).length, tot = getCustTotal(orders, c.phone);
+return <tr key={c.phone} style={{ borderBottom: "1px solid #21262d" }}>
+<td style={{ padding: "8px 11px", color: "#8b949e", fontSize: ".8rem" }}>{i + 1}</td>
+<td style={{ padding: "8px 11px" }}><strong>{c.name}</strong>{c.area && <><br /><span style={{ fontSize: ".7rem", color: "#8b949e" }}>{c.area}</span></>}</td>
+<td style={{ padding: "8px 11px", fontFamily: "monospace", fontSize: ".8rem" }}>{c.phone}</td>
+<td style={{ padding: "8px 11px", fontWeight: 700, color: "#58a6ff" }}>{cnt}</td>
+<td style={{ padding: "8px 11px", color: "#3fb950", fontWeight: 600 }}>৳{tot.toLocaleString("en-US")}</td>
+<td style={{ padding: "8px 11px" }}><Badge count={cnt} /></td>
+<td style={{ padding: "8px 11px" }}><button onClick={() => { setTab("search"); setSearchPhone(c.phone); doSearch(c.phone); }} style={btnS("outline", true)}>👁</button></td>
+</tr>;
+})}</tbody>
+</table></div>}
+</div>
+)}
+
+{/* ══ LOG ══ */}
+{tab === "log" && (
+<div style={S.card}>
+<div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 13, flexWrap: "wrap", gap: 8 }}>
+<div style={{ fontWeight: 700 }}>📋 দৈনিক লগ</div>
+<div style={{ display: "flex", gap: 7 }}>
+<input type="date" value={logDate} onChange={e => setLogDate(e.target.value)} style={{ ...S.inp, width: "auto", padding: "7px 10px", fontSize: ".8rem" }} />
+<button onClick={() => { const wb = XLSX.utils.book_new(); const rows = [["সময়", "নাম", "মোবাইল", "অর্ডার নং", "আইটেম", "পণ্য মূল্য", "ডেলিভারি", "সর্বমোট", "নোট"]]; logOrders.forEach(o => rows.push([fmtTime(o.date), o.name, o.phone, o.orderNum, o.items || "", safeNum(o.amount), safeNum(o.deliveryCharge), getGrand(o), o.note || ""])); XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(rows), "লগ"); XLSX.writeFile(wb, `লগ_${logDate}.xlsx`); notify("Excel ✅", "লগ ডাউনলোড হয়েছে।"); }} style={btnS("outline", true)}>⬇️ Excel</button>
+</div>
+</div>
+<div style={{ background: "#21262d", border: "1px solid #30363d", borderRadius: 8, padding: "9px 14px", marginBottom: 9, display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 7 }}>
+<span style={{ color: "#f0883e", fontWeight: 600 }}>{new Date(logDate + "T00:00:00").toLocaleDateString("bn-BD", { weekday: "long", year: "numeric", month: "long", day: "numeric" })}</span>
+<div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
+{logDel > 0 && <span style={{ fontSize: ".78rem", color: "#f0883e" }}>🚴 ডেলিভারি: ৳{fmtAmt(logDel)}</span>}
+<span style={{ color: "#3fb950", fontWeight: 600 }}>সর্বমোট: ৳{fmtAmt(logTotal)} ({logOrders.length})</span>
+</div>
+</div>
+{logOrders.filter(o => o.orderNum === 2 || o.orderNum === 20).length > 0 && (
+<div style={{ background: "#21262d", border: "1px solid #e3b341", borderRadius: 7, padding: "8px 13px", marginBottom: 9, fontSize: ".8rem", color: "#e3b341" }}>
+🎁 {logOrders.filter(o => o.orderNum === 2 || o.orderNum === 20).map(o => `${o.name} (#${o.orderNum})`).join(", ")}
+</div>
+)}
+{logOrders.length === 0
+? <div style={{ textAlign: "center", padding: "32px", color: "#8b949e" }}>📦 এই তারিখে কোনো অর্ডার নেই।</div>
+: logOrders.map(o => (
+<div key={o.id} style={{ background: "#161b22", border: "1px solid #30363d", borderRadius: 8, padding: "9px 13px", marginBottom: 5, display: "flex", gap: 9, alignItems: "center" }}>
+<div style={{ color: "#8b949e", fontSize: ".72rem", minWidth: 52 }}>{fmtTime(o.date)}</div>
+<div style={{ flex: 1 }}>
+<strong style={{ fontSize: ".86rem" }}>{o.name}</strong> <span style={{ color: "#8b949e", fontSize: ".75rem" }}>{o.phone}</span>
+{o.orderNum === 2 && <span style={{ marginLeft: 5, background: "#1a3a5c", color: "#58a6ff", borderRadius: 20, padding: "1px 7px", fontSize: ".68rem", fontWeight: 600 }}>২য় 🎉</span>}
+{o.orderNum === 20 && <span style={{ marginLeft: 5, background: "#3d2a00", color: "#e3b341", borderRadius: 20, padding: "1px 7px", fontSize: ".68rem", fontWeight: 600 }}>২০তম 🏆</span>}
+<div style={{ fontSize: ".75rem", color: "#8b949e" }}>{o.items}</div>
+</div>
+<div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 2 }}>
+<span style={{ fontWeight: 700, color: "#3fb950", fontSize: ".87rem" }}>৳{fmtAmt(getGrand(o))}</span>
+{safeNum(o.deliveryCharge) > 0 && <span style={{ fontSize: ".68rem", color: "#f0883e" }}>+৳{fmtAmt(o.deliveryCharge)}</span>}
+<button onClick={() => setReceipt(o)} style={btnS("outline", true)}>🧾</button>
+</div>
+</div>
+))}
+</div>
+)}
+
+{/* ══ EXPORT (admin only) ══ */}
+{tab === "export" && session.role === "admin" && (
+<div>
+<div style={S.card}>
+<div style={S.cardTitle}>📤 Excel (.xlsx) এক্সপোর্ট</div>
+<div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(160px,1fr))", gap: 11 }}>
+{[["customers", "📊", "কাস্টমার লিস্ট"], ["orders", "🧾", "অর্ডার হিস্ট্রি"], ["today", "📅", "আজকের রিপোর্ট"], ["full", "📋", "সম্পূর্ণ রিপোর্ট"]].map(([type, icon, title]) => (
+<div key={type} onClick={() => xlsxExport(type)} style={{ background: "#21262d", border: "1px solid #30363d", borderRadius: 10, padding: 16, textAlign: "center", cursor: "pointer" }}
+onMouseEnter={e => e.currentTarget.style.borderColor = "#f0883e"} onMouseLeave={e => e.currentTarget.style.borderColor = "#30363d"}>
+<div style={{ fontSize: "1.8rem", marginBottom: 7 }}>{icon}</div>
+<div style={{ fontWeight: 700, fontSize: ".88rem" }}>{title}</div>
+</div>
+))}
+</div>
+</div>
+<div style={S.card}>
+<div style={S.cardTitle}>🔵 CSV — Google Sheets</div>
+<div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 8 }}>
+<select value={exportRange} onChange={e => setExportRange(e.target.value)} style={{ ...S.inp, width: "auto", padding: "8px 10px", fontSize: ".84rem" }}>
+<option value="all">সব সময়</option><option value="today">আজকে</option><option value="week">এই সপ্তাহ</option><option value="month">এই মাস</option>
+</select>
+<button onClick={csvExport} style={btnS("info")}>⬇️ CSV ডাউনলোড</button>
+</div>
+<p style={{ fontSize: ".75rem", color: "#8b949e" }}>💡 Google Sheets: Drive → New → File Upload → CSV নির্বাচন</p>
+</div>
+<div style={S.card}>
+<div style={S.cardTitle}>💾 ব্যাকআপ ও রিস্টোর</div>
+<div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+<button onClick={backupJSON} style={btnS("outline")}>💾 JSON ব্যাকআপ</button>
+<button onClick={() => document.getElementById("imp-json").click()} style={btnS("outline")}>📂 ব্যাকআপ লোড</button>
+<button onClick={async () => { if (confirm("সব ডেটা মুছবেন?") && confirm("সত্যিই? আগে ব্যাকআপ নিন!")) { setCustomers({}); setOrders([]); await persist({}, []); notify("মুছা হয়েছে", "সব ডেটা ক্লিয়ার।", "error"); } }} style={btnS("danger", true)}>⚠️ সব মুছুন</button>
+</div>
+<input type="file" id="imp-json" accept=".json" style={{ display: "none" }} onChange={importJSON} />
+<div style={{ marginTop: 11, padding: "9px 13px", background: "#21262d", borderRadius: 7, fontSize: ".78rem", color: "#8b949e" }}>
+📊 {custList.length} কাস্টমার · {orders.length} অর্ডার · ডেটা LocalStorage-এ সুরক্ষিত থাকে
+</div>
+</div>
+</div>
+)}
+
+{/* ══ SETTINGS ══ */}
+{tab === "settings" && (
+<div>
+<div style={S.card}>
+<div style={S.cardTitle}>🏪 দোকানের তথ্য</div>
+<div style={S.row}>
+<div><label style={S.label}>দোকানের নাম</label><input type="text" value={settings.shopName} onChange={e => setSettings(s => ({ ...s, shopName: e.target.value }))} style={S.inp} /></div>
+<div><label style={S.label}>মালিকের নাম</label><input type="text" value={settings.owner} onChange={e => setSettings(s => ({ ...s, owner: e.target.value }))} style={S.inp} /></div>
+</div>
+<div style={S.row}>
+<div><label style={S.label}>ঠিকানা</label><input type="text" value={settings.address} onChange={e => setSettings(s => ({ ...s, address: e.target.value }))} style={S.inp} /></div>
+<div><label style={S.label}>মোবাইল</label><input type="text" value={settings.mobile} onChange={e => setSettings(s => ({ ...s, mobile: e.target.value }))} style={S.inp} /></div>
+</div>
+<div style={{ marginBottom: 11 }}><label style={S.label}>রিসিটের ফুটার</label><input type="text" value={settings.footer} onChange={e => setSettings(s => ({ ...s, footer: e.target.value }))} style={S.inp} /></div>
+<div style={S.row}>
+<div><label style={S.label}>২য় অর্ডার অফার বার্তা</label><input type="text" value={settings.offer2} onChange={e => setSettings(s => ({ ...s, offer2: e.target.value }))} style={S.inp} /></div>
+<div><label style={S.label}>২০তম অর্ডার অফার বার্তা</label><input type="text" value={settings.offer20} onChange={e => setSettings(s => ({ ...s, offer20: e.target.value }))} style={S.inp} /></div>
+</div>
+<button onClick={async () => { await persistSettings(settings); notify("সেটিংস সেভ ✅", "দোকানের তথ্য আপডেট হয়েছে।"); }} style={btnS("success")}>💾 সেটিংস সেভ করুন</button>
+</div>
+
+<div style={S.card}>
+<div style={S.cardTitle}>🔑 পাসওয়ার্ড পরিবর্তন</div>
+<div style={S.row}>
+<div><label style={S.label}>নতুন পাসওয়ার্ড</label><input type="password" value={myPwd.n1} onChange={e => setMyPwd(p => ({ ...p, n1: e.target.value }))} placeholder="নতুন পাসওয়ার্ড" style={S.inp} /></div>
+<div><label style={S.label}>নিশ্চিত করুন</label><input type="password" value={myPwd.n2} onChange={e => setMyPwd(p => ({ ...p, n2: e.target.value }))} placeholder="আবার লিখুন" style={S.inp} /></div>
+</div>
+{userMsg && <div style={{ padding: "7px 11px", borderRadius: 7, marginBottom: 9, fontSize: ".8rem", background: userMsg.startsWith("✅") ? "#0d2a0d" : "#2a0a0a", color: userMsg.startsWith("✅") ? "#3fb950" : "#f85149", border: `1px solid ${userMsg.startsWith("✅") ? "#3fb950" : "#f85149"}` }}>{userMsg}</div>}
+<button onClick={changePwd} style={btnS("info")}>🔑 পাসওয়ার্ড পরিবর্তন করুন</button>
+</div>
+
+{session.role === "admin" && (
+<div style={S.card}>
+<div style={S.cardTitle}>👥 সাব-অ্যাডমিন ম্যানেজমেন্ট</div>
+<div style={{ background: "#21262d", borderRadius: 8, padding: 13, marginBottom: 14 }}>
+<div style={{ fontSize: ".83rem", fontWeight: 600, color: "#58a6ff", marginBottom: 9 }}>➕ নতুন সাব-অ্যাডমিন</div>
+<div style={S.row}>
+<div><label style={S.label}>নাম</label><input type="text" value={newUser.name} onChange={e => setNewUser(u => ({ ...u, name: e.target.value }))} placeholder="রহিম মিয়া" style={S.inp} /></div>
+<div><label style={S.label}>ইউজারনেম</label><input type="text" value={newUser.username} onChange={e => setNewUser(u => ({ ...u, username: e.target.value.toLowerCase().replace(/\s/g, "") }))} placeholder="rahim123" style={S.inp} /></div>
+<div><label style={S.label}>পাসওয়ার্ড</label><input type="password" value={newUser.password} onChange={e => setNewUser(u => ({ ...u, password: e.target.value }))} placeholder="••••••" style={S.inp} /></div>
+</div>
+<button onClick={addUser} style={btnS("success", true)}>✅ যোগ করুন</button>
+</div>
+<div style={{ fontSize: ".78rem", fontWeight: 600, color: "#8b949e", textTransform: "uppercase", letterSpacing: ".07em", marginBottom: 8 }}>বর্তমান ইউজার</div>
+<div style={{ background: "#21262d", border: "1px solid #30363d", borderRadius: 8, padding: "9px 13px", marginBottom: 6, display: "flex", alignItems: "center", gap: 10 }}>
+<span>👑</span><div style={{ flex: 1 }}><div style={{ fontWeight: 600 }}>Admin (আপনি)</div><div style={{ fontSize: ".73rem", color: "#8b949e" }}>সম্পূর্ণ অ্যাক্সেস · স্থায়ী</div></div>
+</div>
+{users.length === 0
+? <div style={{ textAlign: "center", padding: "16px", color: "#8b949e", fontSize: ".82rem" }}>কোনো সাব-অ্যাডমিন নেই।</div>
+: users.map(u => (
+<div key={u.username} style={{ background: "#21262d", border: "1px solid #30363d", borderRadius: 8, padding: "9px 13px", marginBottom: 6, display: "flex", alignItems: "center", gap: 10 }}>
+<span>👤</span>
+<div style={{ flex: 1 }}><div style={{ fontWeight: 600 }}>{u.name}</div><div style={{ fontSize: ".73rem", color: "#8b949e" }}>@{u.username} · সাব-অ্যাডমিন</div></div>
+<button onClick={() => removeUser(u.username)} style={{ background: "none", border: "1px solid #f85149", color: "#f85149", borderRadius: 6, padding: "4px 9px", fontFamily: "inherit", fontSize: ".74rem", cursor: "pointer" }}>🗑️ মুছুন</button>
+</div>
+))}
+</div>
+)}
+</div>
+)}
+</div>
+
+{receipt && <Receipt order={receipt} settings={settings} onClose={() => setReceipt(null)} />}
+<Notif n={notif} />
+</div>
+);
+}
