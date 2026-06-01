@@ -5,105 +5,91 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>FAST_Grocery Professional Admin</title>
     <script src="https://cdn.tailwindcss.com"></script>
+
     <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
 </head>
+
 <body class="bg-gray-100">
 
+<!-- LOGIN -->
 <div id="loginScreen" class="fixed inset-0 bg-black bg-opacity-80 flex items-center justify-center z-50">
     <div class="bg-white p-10 rounded-3xl shadow-2xl w-[90%] max-w-md">
         <h2 class="text-3xl font-bold text-center text-green-700 mb-8">FAST_Grocery Admin Login</h2>
         <input type="email" id="adminEmail" placeholder="Admin Email" class="border p-4 rounded-xl w-full mb-4"/>
         <input type="password" id="adminPassword" placeholder="Password" class="border p-4 rounded-xl w-full mb-5"/>
-        <button onclick="adminLogin()" class="bg-green-600 hover:bg-green-700 text-white w-full py-4 rounded-2xl text-xl font-bold">Login</button>
+        <button onclick="adminLogin()" class="bg-green-600 text-white w-full py-4 rounded-2xl font-bold">Login</button>
         <p id="loginError" class="text-red-500 text-center mt-4"></p>
     </div>
 </div>
 
 <div class="flex">
-    <div class="w-64 bg-green-700 min-h-screen text-white p-5">
-        <h1 class="text-3xl font-bold mb-10">FAST_Grocery</h1>
-        <ul class="space-y-4">
-            <li class="bg-green-900 p-3 rounded">Dashboard</li>
-            <li class="bg-green-800 p-3 rounded">Orders</li>
-            <li class="bg-green-800 p-3 rounded">Products</li>
-            <li class="bg-green-800 p-3 rounded">Combo Offers</li>
-            <li class="bg-green-800 p-3 rounded">Live Offers</li>
-            <li class="bg-green-800 p-3 rounded">Customers</li>
-            <li onclick="logout()" class="bg-red-500 hover:bg-red-700 p-3 rounded cursor-pointer">Logout</li>
-        </ul>
+
+<!-- SIDEBAR -->
+<div class="w-64 bg-green-700 min-h-screen text-white p-5">
+    <h1 class="text-3xl font-bold mb-10">FAST_Grocery</h1>
+    <ul class="space-y-4">
+        <li class="bg-green-900 p-3 rounded">Dashboard</li>
+        <li class="bg-green-800 p-3 rounded">Orders</li>
+        <li class="bg-green-800 p-3 rounded">Customers</li>
+        <li class="bg-green-800 p-3 rounded">Products</li>
+        <li class="bg-green-800 p-3 rounded">Offers</li>
+        <li onclick="logout()" class="bg-red-500 p-3 rounded cursor-pointer">Logout</li>
+    </ul>
+</div>
+
+<!-- MAIN -->
+<div class="flex-1 p-6">
+
+<h2 class="text-4xl font-bold mb-8">Professional Admin Dashboard</h2>
+
+<!-- DASHBOARD -->
+<div class="grid md:grid-cols-5 gap-5 mb-10">
+
+    <div class="bg-white p-6 rounded-2xl shadow">
+        <h3>Total Orders</h3>
+        <p id="totalOrders" class="text-4xl font-bold text-green-700">0</p>
     </div>
 
-    <div class="flex-1 p-6">
-        <h2 class="text-4xl font-bold mb-8">Professional Admin Dashboard</h2>
-
-        <div class="grid md:grid-cols-4 gap-5 mb-10">
-            <div class="bg-white p-6 rounded-2xl shadow">
-                <h3>Total Orders</h3>
-                <p id="totalOrders" class="text-4xl font-bold text-green-700">0</p>
-            </div>
-            <div class="bg-white p-6 rounded-2xl shadow">
-                <h3>Pending</h3>
-                <p id="pendingOrders" class="text-4xl font-bold text-yellow-500">0</p>
-            </div>
-            <div class="bg-white p-6 rounded-2xl shadow">
-                <h3>Delivered</h3>
-                <p id="completedOrders" class="text-4xl font-bold text-blue-600">0</p>
-            </div>
-            <div class="bg-white p-6 rounded-2xl shadow">
-                <h3>Customers</h3>
-                <p id="customers" class="text-4xl font-bold text-red-600">0</p>
-            </div>
-        </div>
-
-        <div class="bg-white p-6 rounded-2xl shadow mb-10">
-            <h3 class="text-2xl font-bold mb-5">Add Product</h3>
-            <input id="productName" type="text" placeholder="Product Name" class="border p-4 rounded-xl w-full mb-4"/>
-            <input id="productPrice" type="number" placeholder="Price" class="border p-4 rounded-xl w-full mb-4"/>
-            <input id="productImage" type="text" placeholder="Image URL" class="border p-4 rounded-xl w-full mb-4"/>
-            <button onclick="addProduct()" class="bg-green-700 text-white px-6 py-3 rounded-xl">Add Product</button>
-        </div>
-
-        <div class="bg-white p-6 rounded-2xl shadow mb-10">
-            <h3 class="text-2xl font-bold mb-5">Product List</h3>
-            <div id="productList" class="grid grid-cols-1 md:grid-cols-3 gap-4"></div>
-        </div>
-
-        <div class="bg-white p-6 rounded-2xl shadow mb-10">
-            <h3 class="text-2xl font-bold mb-5">Add Combo Offer</h3>
-            <input id="comboName" type="text" placeholder="Combo Name" class="border p-4 rounded-xl w-full mb-4"/>
-            <input id="comboPrice" type="number" placeholder="Combo Price" class="border p-4 rounded-xl w-full mb-4"/>
-            <input id="comboImage" type="text" placeholder="Combo Image URL" class="border p-4 rounded-xl w-full mb-4"/>
-            <textarea id="comboItems" placeholder="Combo Items" class="border p-4 rounded-xl w-full mb-4"></textarea>
-            <button onclick="addCombo()" class="bg-yellow-500 text-white px-6 py-3 rounded-xl">Add Combo</button>
-        </div>
-
-        <div class="bg-white p-6 rounded-2xl shadow mb-10">
-            <h3 class="text-2xl font-bold mb-5">Combo List</h3>
-            <div id="comboList"></div>
-        </div>
-
-        <div class="bg-white p-6 rounded-2xl shadow mb-10">
-            <h3 class="text-2xl font-bold mb-5">Add Live Offer</h3>
-            <input id="offerText" type="text" placeholder="Offer Text" class="border p-4 rounded-xl w-full mb-4"/>
-            <button onclick="addOffer()" class="bg-red-600 text-white px-6 py-3 rounded-xl">Add Offer</button>
-        </div>
-
-        <div class="bg-white p-6 rounded-2xl shadow mb-10">
-            <h3 class="text-2xl font-bold mb-5">Offer List</h3>
-            <div id="offerList"></div>
-        </div>
-
-        <div class="bg-white p-6 rounded-2xl shadow">
-            <h3 class="text-2xl font-bold mb-5">Live Orders</h3>
-            <div id="orderList"></div>
-        </div>
+    <div class="bg-white p-6 rounded-2xl shadow">
+        <h3>Pending</h3>
+        <p id="pendingOrders" class="text-4xl font-bold text-yellow-500">0</p>
     </div>
+
+    <div class="bg-white p-6 rounded-2xl shadow">
+        <h3>Delivered</h3>
+        <p id="completedOrders" class="text-4xl font-bold text-blue-600">0</p>
+    </div>
+
+    <div class="bg-white p-6 rounded-2xl shadow">
+        <h3>Customers</h3>
+        <p id="customers" class="text-4xl font-bold text-red-600">0</p>
+    </div>
+
+    <div class="bg-white p-6 rounded-2xl shadow">
+        <h3>Total Spent</h3>
+        <p id="totalSpent" class="text-4xl font-bold text-purple-600">0৳</p>
+    </div>
+
+</div>
+
+<!-- CUSTOMERS -->
+<div class="bg-white p-6 rounded-2xl shadow mb-10">
+    <h3 class="text-2xl font-bold mb-5">👤 Customers (VIP System)</h3>
+    <div id="customerList"></div>
+</div>
+
+<!-- ORDERS -->
+<div class="bg-white p-6 rounded-2xl shadow">
+    <h3 class="text-2xl font-bold mb-5">📦 Orders</h3>
+    <div id="orderList"></div>
+</div>
+
+</div>
 </div>
 
 <script>
-// আপনার প্রথম দেওয়া Firebase Config এখানে বসানো হয়েছে
 const firebaseConfig = {
     apiKey: "AIzaSyAHqRScSfPxa4Td7qNMCxVI33lUUBSxDaY",
     authDomain: "fast-grocery-main.firebaseapp.com",
@@ -120,220 +106,152 @@ const auth = firebase.auth();
 </script>
 
 <script>
+// LOGIN
 function adminLogin(){
-    const email = document.getElementById("adminEmail").value;
-    const password = document.getElementById("adminPassword").value;
-    auth.signInWithEmailAndPassword(email, password)
-    .then(()=>{
-        document.getElementById("loginScreen").style.display="none";
-    })
-    .catch((error)=>{
-        console.error(error);
-        document.getElementById("loginError").innerText = "Wrong Email or Password";
-    });
+    const email = adminEmail.value;
+    const pass = adminPassword.value;
+
+    auth.signInWithEmailAndPassword(email, pass)
+    .then(()=> loginScreen.style.display="none")
+    .catch(()=> loginError.innerText="Login Failed");
 }
 
-auth.onAuthStateChanged((user)=>{
+auth.onAuthStateChanged(user=>{
     if(user){
-        document.getElementById("loginScreen").style.display="none";
-        // লগইন সফল হলেই কেবল ডেটা লোড হবে
-        loadDashboard();
-        loadProducts();
-        loadOrders();
-        loadOffers();
-        loadCombos();
-    } else {
-        document.getElementById("loginScreen").style.display="flex";
+        loginScreen.style.display="none";
+        loadAll();
+    }else{
+        loginScreen.style.display="flex";
     }
 });
 
-function logout(){
-    auth.signOut();
-}
-</script>
+function logout(){ auth.signOut(); }
 
-<script>
+// MAIN LOAD
+function loadAll(){
+    loadDashboard();
+    loadOrders();
+    loadCustomers();
+}
+
+// DASHBOARD
 async function loadDashboard(){
-    try {
-        const orders = await db.collection("orders").get();
-        document.getElementById("totalOrders").innerText = orders.size;
-        let pending = 0;
-        let completed = 0;
-        let customers = new Set();
+    const ordersSnap = await db.collection("orders").get();
+    const custSnap = await db.collection("customers").get();
 
-        orders.forEach(doc=>{
-            const data = doc.data();
-            if(data.phone) customers.add(data.phone);
-            if(data.status == "Delivered"){
-                completed++;
-            } else {
-                pending++;
-            }
-        });
+    let pending=0, delivered=0, totalSpent=0;
 
-        document.getElementById("pendingOrders").innerText = pending;
-        document.getElementById("completedOrders").innerText = completed;
-        document.getElementById("customers").innerText = customers.size;
-    } catch(err) {
-        console.error("Dashboard error:", err);
-    }
+    ordersSnap.forEach(doc=>{
+        const d = doc.data();
+        if(d.status=="Delivered") delivered++;
+        else pending++;
+
+        totalSpent += Number(d.total || 0);
+    });
+
+    totalOrders.innerText = ordersSnap.size;
+    pendingOrders.innerText = pending;
+    completedOrders.innerText = delivered;
+    customers.innerText = custSnap.size;
+    totalSpent.innerText = totalSpent + "৳";
 }
 
-async function addProduct(){
-    const name = document.getElementById("productName").value;
-    const price = document.getElementById("productPrice").value;
-    const image = document.getElementById("productImage").value;
+// CUSTOMERS (NEW SYSTEM)
+async function loadCustomers(){
+    const snap = await db.collection("customers").get();
+    let html="";
 
-    if(!name || !price) {
-        alert("Please enter Name and Price");
-        return;
-    }
+    snap.forEach(doc=>{
+        const c = doc.data();
 
-    try {
-        await db.collection("products").add({ name, price, image });
-        alert("Product Added successfully!");
-        // ইনপুট ফিল্ড খালি করার জন্য
-        document.getElementById("productName").value = "";
-        document.getElementById("productPrice").value = "";
-        document.getElementById("productImage").value = "";
-        loadProducts();
-    } catch(error) {
-        console.error("Error adding product: ", error);
-    }
-}
+        let type = c.customerType || "Normal";
+        let color = type=="VIP" ? "text-yellow-600" : "text-gray-700";
 
-async function loadProducts(){
-    try {
-        const snapshot = await db.collection("products").get();
-        let html = "";
-        snapshot.forEach(doc=>{
-            const data = doc.data();
-            html += `
-            <div class="border p-5 rounded-2xl mb-4 bg-gray-50">
-                <img src="${data.image || 'https://via.placeholder.com/150'}" class="w-full h-52 object-cover rounded-2xl mb-4">
-                <h3 class="text-2xl font-bold">${data.name}</h3>
-                <p class="text-xl text-green-700 font-bold mb-4">৳ ${data.price}</p>
-                <button onclick="deleteProduct('${doc.id}')" class="bg-red-600 text-white px-5 py-2 rounded-xl hover:bg-red-700">Delete</button>
-            </div>`;
-        });
-        document.getElementById("productList").innerHTML = html;
-    } catch(err) {
-        console.error("Error loading products:", err);
-    }
-}
-
-async function deleteProduct(id){
-    if(confirm("Are you sure you want to delete this product?")){
-        await db.collection("products").doc(id).delete();
-        loadProducts();
-    }
-}
-</script>
-
-<script>
-async function addCombo(){
-    const name = document.getElementById("comboName").value;
-    const price = document.getElementById("comboPrice").value;
-    const image = document.getElementById("comboImage").value;
-    const items = document.getElementById("comboItems").value;
-
-    await db.collection("combos").add({ name, price, image, items });
-    alert("Combo Added");
-    loadCombos();
-}
-
-async function loadCombos(){
-    const snapshot = await db.collection("combos").get();
-    let html = "";
-    snapshot.forEach(doc=>{
-        const data = doc.data();
         html += `
-        <div class="border p-5 rounded-2xl mb-4">
-            <img src="${data.image}" class="w-full h-52 object-cover rounded-2xl mb-4">
-            <h3 class="text-2xl font-bold">${data.name}</h3>
-            <p class="text-xl font-bold text-green-700">৳ ${data.price}</p>
-            <p class="my-3 whitespace-pre-line">${data.items}</p>
-            <button onclick="deleteCombo('${doc.id}')" class="bg-red-600 text-white px-5 py-2 rounded-xl">Delete</button>
+        <div class="border p-4 rounded-xl mb-3 flex justify-between items-center">
+            <div>
+                <p class="font-bold">📞 ${c.phone}</p>
+                <p>Total Orders: ${c.totalOrders || 0}</p>
+                <p>Total Spent: ${c.totalSpent || 0}৳</p>
+            </div>
+            <div class="${color} font-bold text-xl">
+                ${type}
+            </div>
         </div>`;
     });
-    document.getElementById("comboList").innerHTML = html;
+
+    customerList.innerHTML = html;
 }
 
-async function deleteCombo(id){
-    await db.collection("combos").doc(id).delete();
-    loadCombos();
-}
-</script>
-
-<script>
-async function addOffer(){
-    const text = document.getElementById("offerText").value;
-    await db.collection("offers").add({ text });
-    alert("Offer Added");
-    loadOffers();
-}
-
-async function loadOffers(){
-    const snapshot = await db.collection("offers").get();
-    let html = "";
-    snapshot.forEach(doc=>{
-        const data = doc.data();
-        html += `
-        <div class="border p-5 rounded-2xl mb-4 flex justify-between items-center">
-            <h3 class="text-red-600 font-bold">${data.text}</h3>
-            <button onclick="deleteOffer('${doc.id}')" class="bg-red-600 text-white px-5 py-2 rounded-xl">Delete</button>
-        </div>`;
-    });
-    document.getElementById("offerList").innerHTML = html;
-}
-
-async function deleteOffer(id){
-    await db.collection("offers").doc(id).delete();
-    loadOffers();
-}
-</script>
-
-<script>
+// ORDERS
 async function loadOrders(){
-    try {
-        // .orderBy("time","desc") এরর তৈরি করতে পারে যদি ফায়ারবেস ইনডেক্স না থাকে, 
-        // তাই আপাতত সাধারণ ভাবে গেট করা হলো।
-        const snapshot = await db.collection("orders").get();
-        let html = "";
-        snapshot.forEach(doc=>{
-            const data = doc.data();
-            html += `
-            <div class="border p-5 rounded-2xl mb-5">
-                <p class="mb-2">👤 ${data.name || 'N/A'}</p>
-                <p class="mb-2">📞 ${data.phone || 'N/A'}</p>
-                <p class="mb-2">📍 ${data.address || 'N/A'}</p>
-                <p class="mb-2 whitespace-pre-line">📦 ${data.product || 'N/A'}</p>
-                <p class="mb-4">Status: <b class="text-blue-600">${data.status || "Pending"}</b></p>
-                <select onchange="updateStatus('${doc.id}',this.value)" class="border p-3 rounded-xl w-full mb-4">
-                    <option value="Pending" ${data.status=='Pending'?'selected':''}>Pending</option>
-                    <option value="Processing" ${data.status=='Processing'?'selected':''}>Processing</option>
-                    <option value="Delivered" ${data.status=='Delivered'?'selected':''}>Delivered</option>
-                    <option value="Cancelled" ${data.status=='Cancelled'?'selected':''}>Cancelled</option>
-                </select>
-                <button onclick="deleteOrder('${doc.id}')" class="bg-red-600 text-white px-5 py-2 rounded-xl">Delete</button>
-            </div>`;
-        });
-        document.getElementById("orderList").innerHTML = html;
-    } catch(err) {
-        console.error("Error loading orders:", err);
+    const snap = await db.collection("orders").get();
+    let html="";
+
+    snap.forEach(doc=>{
+        const d = doc.data();
+
+        html += `
+        <div class="border p-4 rounded-xl mb-4">
+            <p>👤 ${d.name}</p>
+            <p>📞 ${d.phone}</p>
+            <p>📦 ${d.product}</p>
+            <p>💰 ${d.total}৳</p>
+
+            <select onchange="updateStatus('${doc.id}',this.value)" class="border p-2 mt-2">
+                <option ${d.status=="Pending"?"selected":""}>Pending</option>
+                <option ${d.status=="Processing"?"selected":""}>Processing</option>
+                <option ${d.status=="Delivered"?"selected":""}>Delivered</option>
+                <option ${d.status=="Cancelled"?"selected":""}>Cancelled</option>
+            </select>
+        </div>`;
+    });
+
+    orderList.innerHTML = html;
+}
+
+// STATUS UPDATE + AUTO CUSTOMER SYSTEM
+async function updateStatus(id,status){
+
+    await db.collection("orders").doc(id).update({status});
+
+    const orderDoc = await db.collection("orders").doc(id).get();
+    const o = orderDoc.data();
+
+    if(o.phone){
+        const custRef = db.collection("customers").doc(o.phone);
+        const custDoc = await custRef.get();
+
+        if(custDoc.exists){
+            let c = custDoc.data();
+
+            let newSpent = (c.totalSpent || 0);
+            let newOrders = (c.totalOrders || 0);
+
+            if(status=="Delivered"){
+                newSpent += Number(o.total || 0);
+                newOrders += 1;
+            }
+
+            let type = newSpent > 5000 ? "VIP" : "Normal";
+
+            await custRef.update({
+                totalSpent: newSpent,
+                totalOrders: newOrders,
+                customerType: type
+            });
+
+        }else{
+            await custRef.set({
+                phone: o.phone,
+                totalSpent: o.total || 0,
+                totalOrders: status=="Delivered"?1:0,
+                customerType: (o.total>5000?"VIP":"Normal")
+            });
+        }
     }
-}
 
-async function updateStatus(id, status){
-    await db.collection("orders").doc(id).update({ status });
-    loadOrders();
-    loadDashboard();
-}
-
-async function deleteOrder(id){
-    await db.collection("orders").doc(id).delete();
-    loadOrders();
-    loadDashboard();
+    loadAll();
 }
 </script>
 
